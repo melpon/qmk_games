@@ -24,7 +24,7 @@
 
 ### インストール方法
 
-[QMK Firmware](https://github.com/qmk/qmk_firmware) を [ドキュメント](https://docs.qmk.fm/#/newbs_getting_started) の通りに実行してキーボードに転送できるようにしておいて下さい。
+まず [QMK Firmware](https://github.com/qmk/qmk_firmware) を [ドキュメント](https://docs.qmk.fm/#/newbs_getting_started) の通りに実行してキーボードに転送できるようにしておいて下さい。
 
 Helix でデフォルトのキー配置を利用する場合は `make helix:default` でビルドして `make helix:default:avrdude` でキーボードに転送できます。
 
@@ -285,6 +285,90 @@ OLED を有効にします。
 +
 +  screen_update(&g_screen, &matrix);
 +}
+```
+
+#### Helix 以外の環境にインストールする
+
+`games/ssd1306.c` というファイルは QMK Firmware の `keyboards/helix/ssd1306.c` を改変したものです。
+
+そのため Helix 以外の環境である場合は内容が合わないと思うので、以下の `qmk_firmware/keyboards/helix/ssd1306.c` と `qmk_games/games/ssd1306.c` の差分を見て手動で修正して下さい。
+
+基本的に `matrix_render` 関数の代わりに、自作の `screen_render` 関数を利用するように変更しているだけです。
+
+```diff
+--- qmk_firmware/keyboards/helix/ssd1306.c	2019-04-13 00:13:44.000000000 +0900
++++ qmk_games/games/ssd1306.c	2019-04-13 00:09:15.000000000 +0900
+@@ -2,6 +2,7 @@
+ #ifdef SSD1306OLED
+ 
+ #include "ssd1306.h"
++#include "screen.h"
+ #include "i2c.h"
+ #include <string.h>
+ #include "print.h"
+@@ -313,8 +314,52 @@
+ #endif
+ }
+ 
++// ビット反転
++uint8_t revbits8(uint8_t v) {
++  v = ((v >> 1) & 0x55) | ((v & 0x55) << 1);
++  v = ((v >> 2) & 0x33) | ((v & 0x33) << 2);
++  v = ((v >> 4) & 0x0F) | ((v & 0x0F) << 4);
++  return v;
++}
++
++void screen_render(ScreenMatrix* screen) {
++  last_flush = timer_read();
++  iota_gfx_on();
++#if DEBUG_TO_SCREEN
++  ++displaying;
++#endif
++
++  // Move to the home position
++  send_cmd3(PageAddr, 0, (DisplayHeight / 8) - 1);
++  send_cmd3(ColumnAddr, 0, DisplayWidth - 1);
++
++  if (i2c_start_write(SSD1306_ADDRESS)) {
++    goto done;
++  }
++  if (i2c_master_write(0x40)) {
++    // Data mode
++    goto done;
++  }
++
++  for (uint8_t row = 0; row < MatrixRows; ++row) {
++    for (uint8_t col = 0; col < DisplayWidth; ++col) {
++      uint8_t bits = screen->screen[DisplayWidth - col - 1][row];
++      i2c_master_write(revbits8(bits));
++    }
++  }
++
++  screen->dirty = false;
++
++done:
++  i2c_master_stop();
++#if DEBUG_TO_SCREEN
++  --displaying;
++#endif
++}
++
+ void iota_gfx_flush(void) {
+-  matrix_render(&display);
++  //matrix_render(&display);
++  screen_render(&g_screen);
+ }
+ 
+ __attribute__ ((weak))
+@@ -324,7 +369,7 @@
+ void iota_gfx_task(void) {
+   iota_gfx_task_user();
+ 
+-  if (display.dirty|| force_dirty) {
++  if (g_screen.dirty || force_dirty) {
+     iota_gfx_flush();
+     force_dirty = false;
+   }
 ```
 
 ## 問題の報告について
